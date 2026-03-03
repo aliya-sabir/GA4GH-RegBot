@@ -14,7 +14,7 @@ class RegBot:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.vector_db = None
-        self.llm = None
+        self.llm = "meta-llama/Llama-3.1-8B-Instruct"
         print("Initializing RegBot Core...")
 
     def ingest_policy_documents(self, file_path: str) -> bool:
