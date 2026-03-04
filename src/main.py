@@ -13,7 +13,8 @@ class RegBot:
     """
     
     def __init__(self, api_key: Optional[str] = None, model_name: str = "meta-llama/Llama-3.1-8B-Instruct"):
-        self.api_key = api_key or os.getenv("HF_API_TOKEN")
+        self.api_key = api_key or os.getenv("git checkout poc
+git pull origin poc")
         self.vector_db = None
         self.llm = model_name 
         self.load_llm(self.llm)
