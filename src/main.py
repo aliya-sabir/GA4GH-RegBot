@@ -68,8 +68,7 @@ class RegBot:
             if not chunk.get("content") or not chunk["content"].strip():
                 continue
             
-            clause_texts=[chunk["content"] for chunk in clauses]
-            clause_embedding = self.embedding_model.encode(clause_texts, convert_to_tensor=True)
+            clause_embedding = self.embedding_model.encode(chunk['content'], convert_to_tensor=True)
             similarity = util.cos_sim(user_embedding, clause_embedding)[0][0].item()
             results.append({
                 "clause_number": chunk["chunk_id"],
