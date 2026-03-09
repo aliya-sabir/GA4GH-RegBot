@@ -19,7 +19,7 @@ class ComplianceChecker:
         """Construct the prompt sent to the LLM."""
 
         clause_context = "\n".join(
-            f"[{c['clause_number']}] {c['title']}: {c['text']}"
+            f"[{c['document_name']}:{c['clause_number']}]: {c['text']}"
             for c in clauses
         )
 
@@ -39,7 +39,9 @@ class ComplianceChecker:
             '  "status": "Compliant | Partial | Non-Compliant",\n'
             '  "missing_elements": ["list of missing requirements"],\n'
             '  "suggested_fix": "short recommendation",\n'
-            '  "clause_citations": ["clause numbers used"]\n'
+            '  "clause_citations": [\n'
+            '    {"id": "clause number", "title": "clause title", "excerpt": "relevant clause text"}\n'
+            '  ]\n'
             '}\n\n'
             "Do not include any text outside the JSON."
         )
@@ -61,7 +63,10 @@ class ComplianceChecker:
             "status": "Unknown",
             "missing_elements": [],
             "suggested_fix": "",
-            "clause_citations": [c.get("clause_number", "unknown") for c in top_clauses]
+            "clause_citations": [
+                {"id": c.get("clause_number", "unknown"), "title": c.get("title", ""), "excerpt": c.get("text", "")}
+                for c in top_clauses
+            ]
         }
         prompt = self._build_prompt(user_consent_form, top_clauses)   
 

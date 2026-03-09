@@ -1,0 +1,30 @@
+{
+  "Framework-Version-3September20191.pdf": {
+    "document_name": "framework",
+    "source_url": "https://www.ga4gh.org/wp-content/uploads/Framework-Version-3September20191.pdf"
+  },
+  "GA4GH DAA Template Clauses 2024 Final.pdf": {
+    "document_name": "daa_template_clauses",
+    "source_url": "https://www.ga4gh.org/wp-content/uploads/GA4GH-DAA-Template-Clauses-2024-Final.pdf"
+  },
+  "GA4GH Data Sharing Lexicon_Feb_2025.pdf": {
+    "document_name": "data_sharing_lexicon",
+    "source_url": "https://www.ga4gh.org/wp-content/uploads/GA4GH-Data-Sharing-Lexicon-Feb-2025.pdf"
+  },
+  "GA4GH-Data-Privacy-and-Security-Policy_FINAL-August-2019.pdf": {
+    "document_name": "data_privacy_security_policy",
+    "source_url": "https://www.ga4gh.org/wp-content/uploads/GA4GH-Data-Privacy-and-Security-Policy_FINAL-August-2019.pdf"
+  },
+  "GA4GH-Final-Revised-Consent-Policy_16Sept2019-1.pdf": {
+    "document_name": "consent_policy",
+    "source_url": "https://www.ga4gh.org/wp-content/uploads/GA4GH-Final-Revised-Consent-Policy_16Sept2019-1.pdf"
+  },
+  "Responsible Data Sharing to Respond to the COVID-19 Pandemic_ Ethical and Legal Considerations_PUBLIC.pdf": {
+    "document_name": "covid19_data_sharing",
+    "source_url": "https://www.ga4gh.org/wp-content/uploads/Responsible-Data-Sharing-COVID-19.pdf"
+  },
+  "SAMv1.pdf": {
+    "document_name": "sam_v1",
+    "source_url": "https://www.ga4gh.org/wp-content/uploads/SAMv1.pdf"
+  }
+}
