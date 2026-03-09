@@ -1,6 +1,6 @@
 langchain==0.1.0
 langchain-community==0.0.10
-chromadb==0.4.22
+chromadb>=1.5.4
 openai==1.7.0
 streamlit==1.30.0
 pypdf==3.17.4

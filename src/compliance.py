@@ -1,25 +1,50 @@
 import json
 import re
+from pathlib import Path
 from typing import Any, List, Dict
 from huggingface_hub import InferenceClient
 
+SOURCES_CONFIG = Path(__file__).parent / "pdf_sources.json"
+
+
+def _load_display_names() -> Dict[str, str]:
+    #map document_name -> display_name
+    if SOURCES_CONFIG.exists():
+        with open(SOURCES_CONFIG, "r", encoding="utf-8") as f:
+            sources = json.load(f)
+        return {
+            v["document_name"]: v.get("display_name", v["document_name"])
+            for v in sources.values()
+        }
+    return {}
+
+
+def _readable_citation(document_name: str, clause_number: str, display_map: Dict[str, str], title: str = "") -> str:
+    #format a human-readable citation string
+    display = display_map.get(document_name, document_name.replace("_", " ").title())
+    clean = re.sub(r"_part(\d+)", r" (Part \1)", clause_number)
+    clean = clean.replace("_", " ").rstrip(".")
+    #en dash for readability 
+    citation = f"{display} \u2013 Section {clean}"
+    if title:
+        citation += f": {title.rstrip('.')}"
+    return citation
+
 class ComplianceChecker:
-    """
-    LLM-powered compliance checker for GA4GH clauses.
-    """
 
     def __init__(self, client: InferenceClient):
         self.client = client
+        self._display_map = _load_display_names()
 
     def _build_prompt(
         self,
         user_consent_form: str,
         clauses: List[Dict[str, str]]
     ) -> str:
-        """Construct the prompt sent to the LLM."""
+        """construct the prompt sent to the LLM"""
 
         clause_context = "\n".join(
-            f"[{c['clause_number']}] {c['title']}: {c['text']}"
+            f"[{_readable_citation(c['document_name'], c['clause_number'], self._display_map, c.get('title', ''))}]: {c['text']}"
             for c in clauses
         )
 
@@ -39,7 +64,9 @@ class ComplianceChecker:
             '  "status": "Compliant | Partial | Non-Compliant",\n'
             '  "missing_elements": ["list of missing requirements"],\n'
             '  "suggested_fix": "short recommendation",\n'
-            '  "clause_citations": ["clause numbers used"]\n'
+            '  "citations": [\n'
+            '    {"citation": "Document Name \u2013 Section X.Y", "title": "clause title", "excerpt": "relevant clause text"}\n'
+            '  ]\n'
             '}\n\n'
             "Do not include any text outside the JSON."
         )
@@ -61,7 +88,14 @@ class ComplianceChecker:
             "status": "Unknown",
             "missing_elements": [],
             "suggested_fix": "",
-            "clause_citations": [c.get("clause_number", "unknown") for c in top_clauses]
+            "citations": [
+                {
+                    "citation": _readable_citation(c.get("document_name", ""), c.get("clause_number", "unknown"), self._display_map, c.get("title", "")),
+                    "title": c.get("title", ""),
+                    "excerpt": c.get("text", ""),
+                }
+                for c in top_clauses
+            ]
         }
         prompt = self._build_prompt(user_consent_form, top_clauses)   
 
