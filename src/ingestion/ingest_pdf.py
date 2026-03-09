@@ -18,13 +18,22 @@ splitter = RecursiveCharacterTextSplitter(
     separators=["\n\n", "\n", ". ", " "],
 )
 
-_ROMAN = r"(?:(?:X{0,3})(?:IX|IV|V?I{0,3}))"
+_ROMAN = r"(?:(?:X{1,3}(?:IX|IV|V?I{0,3})|IX|IV|V?I{1,3}|VI{0,3}))"
 
 SUB_SUBSECTION_PATTERN = re.compile(r"^(\d+\.\d+\.\d+)\.?\s+(.+)$")
 SUBSECTION_PATTERN = re.compile(r"^(\d+\.\d+)\.?\s+(.+)$")
 SECTION_PATTERN = re.compile(r"^(\d+)[\.\s]+(.+)$")
 ROMAN_SECTION_PATTERN = re.compile(rf"^({_ROMAN})\.?\s+(.+)$", re.IGNORECASE)
 MIXED_PATTERN = re.compile(rf"^(\d+)\.({_ROMAN})\.?\s+(.+)$", re.IGNORECASE) #some pdfs have a mix of numeric systems
+
+
+def _clean_text(text: str) -> str:
+    #normalize bullet points, zero-width spaces, and excess whitespace
+    text = text.replace("\u200b", "")  # zero-width spaces
+    text = re.sub(r"[\u2022\u25cf\u25a0\u25aa\u25b8\u25ba]\s*", "", text)  # bullet chars
+    text = re.sub(r"[^\S\n]+", " ", text)  # collapse spaces/tabs but keep newlines
+    text = re.sub(r"\n{3,}", "\n\n", text)  # collapse excessive blank lines
+    return text.strip()
 
 
 def extract_pages(file_path: str) -> List[Tuple[int, str]]:
@@ -34,7 +43,7 @@ def extract_pages(file_path: str) -> List[Tuple[int, str]]:
     for i, page in enumerate(reader.pages, start=1):
         text = page.extract_text()
         if text and text.strip():
-            pages.append((i, text))
+            pages.append((i, _clean_text(text)))
     return pages
 
 
@@ -43,32 +52,46 @@ def extract_pdf_text(file_path: str) -> str:
     return "\n".join(text for _, text in extract_pages(file_path))
 
 
+# page headers/footers to ignore
+_PAGE_HEADER_RE = re.compile(
+    r"^\d*\s*[A-Z]\s+[A-Z]+(?:\s+[A-Z]\s*[A-Z]+)*\s*$"
+)  # e.g. "2 C ONSENT P OLICY"
+
+
+def _clean_title(title: str) -> str:
+    #strip trailing dots, zero-width chars, leading/trailing whitespace
+    return title.strip().strip(".")
+
+
 def _match_heading(line: str) -> Optional[Dict[str, str]]:
-    #matches against section numbering patterns 
+    #matches against section numbering patterns
+    if _PAGE_HEADER_RE.match(line):
+        return None
+
     m = SUB_SUBSECTION_PATTERN.match(line)
     if m:
-        return {"id": m.group(1), "title": m.group(2).strip(),
+        return {"id": m.group(1), "title": _clean_title(m.group(2)),
                 "level": "subsubsection", "parent_prefix": m.group(1).rsplit(".", 1)[0]}
 
     m = MIXED_PATTERN.match(line)
     if m:
         cid = f"{m.group(1)}.{m.group(2)}"
-        return {"id": cid, "title": m.group(3).strip(),
+        return {"id": cid, "title": _clean_title(m.group(3)),
                 "level": "subsection", "parent_prefix": m.group(1)}
 
     m = SUBSECTION_PATTERN.match(line)
     if m:
-        return {"id": m.group(1), "title": m.group(2).strip(),
+        return {"id": m.group(1), "title": _clean_title(m.group(2)),
                 "level": "subsection", "parent_prefix": m.group(1).split(".")[0]}
 
     m = SECTION_PATTERN.match(line)
     if m:
-        return {"id": m.group(1), "title": m.group(2).strip(),
+        return {"id": m.group(1), "title": _clean_title(m.group(2)),
                 "level": "section", "parent_prefix": None}
 
     m = ROMAN_SECTION_PATTERN.match(line)
     if m:
-        return {"id": m.group(1).upper(), "title": m.group(2).strip(),
+        return {"id": m.group(1).upper(), "title": _clean_title(m.group(2)),
                 "level": "section", "parent_prefix": None}
 
     return None
@@ -201,6 +224,7 @@ def _postprocess_clauses(clauses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def _fallback_chunks(
+    #text that doesn't match any clause pattern 
     text: str,
     source: str,
     start_index: int = 1,
@@ -225,13 +249,14 @@ def _fallback_chunks(
 
 
 def _assign_pages(
+    #assign pages numbers to clauses 
     clauses: List[Dict[str, Any]],
     pages: List[Tuple[int, str]],
 ) -> None:
     for c in clauses:
         if c.get("page") is not None:
             continue
-        cid = c["chunk_id"].split("_part")[0]
+        cid = c["chunk_id"].split("_part")[0]  #2_part3_part2 -> 2_part3
         for page_num, page_text in pages:
             if cid in page_text:
                 c["page"] = page_num
@@ -302,6 +327,7 @@ def fetch_pdf_chunks(
 
 
 def _load_source_config() -> Dict[str, Dict[str, str]]:
+    #loads metadata config 
     if SOURCES_CONFIG.exists():
         with open(SOURCES_CONFIG, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -320,6 +346,7 @@ def fetch_all_pdfs(
 
     source_map = _load_source_config()
     all_chunks: List[Dict[str, Any]] = []
+    #sorting for reproducibility 
     for pdf_file in sorted(pdf_dir.glob("*.pdf")):
         print(f"Ingesting: {pdf_file.name}")
         cfg = source_map.get(pdf_file.name, {})

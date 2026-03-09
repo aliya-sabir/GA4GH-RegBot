@@ -33,6 +33,8 @@ class VectorStore:
                 {
                     "document_name": c.get("document_name", ""),
                     "chunk_id": c["chunk_id"],
+                    "title": c.get("title", ""),
+                    "level": c.get("level", ""),
                     "source_url": c.get("source_url", ""),
                     "page": c.get("page") or 0,
                 }
@@ -70,6 +72,7 @@ class VectorStore:
             clauses.append({
                 "document_name": meta.get("document_name", ""),
                 "clause_number": meta.get("chunk_id", ""),
+                "title": meta.get("title", ""),
                 "text": doc,
                 "similarity": round(1 - dist, 4),
                 "source": meta.get("source_url", ""),

@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
 from sentence_transformers import SentenceTransformer
 
-from compliance import ComplianceChecker
+from compliance import ComplianceChecker, _readable_citation, _load_display_names
 from ingestion import fetch_chunks, fetch_pdf_chunks, fetch_all_pdfs, VectorStore
 
 URL = "https://www.ga4gh.org/framework/"
@@ -100,10 +100,11 @@ if __name__ == "__main__":
     print(f"'{query}'\n")
     
     for r in retrieved_clauses:
-        print(f"[{r['document_name']}:{r['clause_number']}] (similarity: {r['similarity']:.4f})")
+        citation = _readable_citation(r['document_name'], r['clause_number'], _load_display_names(), r.get('title', ''))
+        print(f"[{citation}] (similarity: {r['similarity']:.4f})")
         print(f"  {r['text']}")
         print()
 
     llm_output = bot.check_compliance(query, retrieved_clauses, top_k=3)
     print("\nCompliance Analysis Result:") 
-    print(json.dumps(llm_output, indent=2))
+    print(json.dumps(llm_output, indent=2, ensure_ascii=False))
