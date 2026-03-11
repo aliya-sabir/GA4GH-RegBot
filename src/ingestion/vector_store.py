@@ -8,6 +8,20 @@ CHROMA_DIR = str(Path(__file__).parent.parent / "chroma_db")
 COLLECTION_NAME = "ga4gh_chunks"
 INGEST_BATCH = 64  # documents per ChromaDB add call
 
+
+def _build_search_text(chunk: Dict[str, Any]) -> str:
+    """Enrich content with document name, title, and keywords for better embedding."""
+    parts = []
+    if chunk.get("document_name"):
+        parts.append(f"Document: {chunk['document_name']}")
+    # avoid duplicating topic if content already starts with it
+    if chunk.get("title") and not chunk["content"].startswith("Topic:"):
+        parts.append(f"Topic: {chunk['title']}")
+    parts.append(chunk["content"])
+    if chunk.get("keywords"):
+        parts.append(f"Keywords: {', '.join(chunk['keywords'])}")
+    return "\n".join(parts)
+
 class VectorStore:
 
     def __init__(self, embedding_model: SentenceTransformer):
@@ -34,15 +48,17 @@ class VectorStore:
                 f"{c.get('document_name', '')}_{c['chunk_id']}_{i + j}"
                 for j, c in enumerate(batch)
             ]
-            docs = [c["content"] for c in batch]
+            docs = [_build_search_text(c) for c in batch]
             metas = [
                 {
                     "document_name": c.get("document_name", ""),
                     "chunk_id": c["chunk_id"],
                     "title": c.get("title", ""),
+                    "content": c["content"],
                     "level": c.get("level", ""),
                     "source_url": c.get("source_url", ""),
                     "page": c.get("page") or 0,
+                    "keywords": ",".join(c.get("keywords", [])),
                 }
                 for c in batch
             ]
@@ -79,7 +95,7 @@ class VectorStore:
                 "document_name": meta.get("document_name", ""),
                 "clause_number": meta.get("chunk_id", ""),
                 "title": meta.get("title", ""),
-                "text": doc,
+                "text": meta.get("content", doc),
                 "similarity": round(1 - dist, 4),
                 "source": meta.get("source_url", ""),
                 "page": meta.get("page", 0),
@@ -91,6 +107,16 @@ class VectorStore:
             for c, score in zip(clauses, scores):
                 c["rerank_score"] = round(score, 4)
             clauses.sort(key=lambda x: x["rerank_score"], reverse=True)
-        #for clause in clauses[:top_k]:
-            #print(f"Reranked clause: {clause['title']} (similarity: {clause['similarity']}, rerank_score: {clause.get('rerank_score')})")
-        return clauses[:top_k]
+
+        #return clauses[:top_k]
+
+        #deduplicate: keep highest-ranked chunk per doc
+        #future improvement dedup using jacard similarity
+        seen = set()
+        deduped = []
+        for c in clauses:
+            key = (c["document_name"], c["title"])
+            if key not in seen:
+                seen.add(key)
+                deduped.append(c)
+        return deduped[:top_k]

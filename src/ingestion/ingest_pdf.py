@@ -31,10 +31,10 @@ _ROMAN = r"(?:(?:X{1,3}(?:IX|IV|V?I{0,3})|IX|IV|V?I{1,3}|VI{0,3}))"
 SUB_SUBSECTION_PATTERN = re.compile(r"^(\d+\.\d+\.\d+)\.?\s+(.+)$")
 SUBSECTION_PATTERN = re.compile(r"^(\d+\.\d+)\.?\s+(.+)$")
 SECTION_PATTERN = re.compile(r"^(\d+)[\.\s]+(.+)$")
-ROMAN_SECTION_PATTERN = re.compile(rf"^({_ROMAN})\.?\s+(.+)$", re.IGNORECASE)
+ROMAN_SECTION_PATTERN = re.compile(rf"^({_ROMAN})\.\s+(.+)$", re.IGNORECASE)
 MIXED_PATTERN = re.compile(rf"^(\d+)\.({_ROMAN})\.?\s+(.+)$", re.IGNORECASE) #some pdfs have a mix of numeric systems
 
-#change 3: added more patterns to ignore such as headers footers and common irrelevant sections
+#change 4: added more patterns to ignore such as headers footers and common irrelevant sections
 #for cleaning up pages headers and footers 
 
 _PAGE_NUMBER_RE = re.compile(r"^\s*\d{1,3}\s*$")
@@ -98,6 +98,45 @@ def _clean_text(text: str) -> str:
 
     return "\n".join(cleaned_lines).strip()
 
+#change 5: added keywords as well for hybrid retrieval
+STOPWORDS = {
+    "the","and","or","a","an","to","of","for","in","on",
+    "with","by","is","are","be","this","that","it","as","at",
+    "from","not","will","can","may","shall","should","would",
+    "has","have","had","been","was","were","its","their","they",
+    "you","your","we","our","any","all","each","such","which",
+    "who","what","when","where","how","than","but","about",
+    "into","through","during","before","after","between","also",
+    "only","very","just","there","here","other","more","most",
+    "some","does","did","these","those","own","same","both",
+    "being","could","might","nor","too","then","include",
+    "including","use","used","using","make","made","given",
+    "provide","provided","well","based","however","therefore",
+    "need","case","way","part","able","apply","whether",
+    "must","upon","within","without","take","set","per",
+    "one","two","even","already","many","next","still",
+}
+
+DOMAIN_TERMS = {
+    "withdrawal", "withdraw", "authorization", "informed", "participate",
+    "sequencing", "genome", "variant", "variants", "genes",
+    "anonymized", "pseudonymized", "identifiable", "coded", "linkage",
+    "breach", "confidentiality", "identification",
+    "oversight", "accountability", "governance", "regulatory", "lawful",
+    "incidental", "disclosure", "findings", "diagnosis", "diagnostic",
+    "safeguards", "datasets", "collection", "processing", "storage",
+    "familial", "minors",
+    "commercial", "discrimination", "recontact", "limitations",
+    "dissemination", "proportionate", "registries",
+}
+
+def extract_keywords(text: str) -> List[str]:
+    words = re.findall(r"[a-zA-Z]{3,}", text.lower())
+    domain_hits = [w for w in words if w in DOMAIN_TERMS]
+    other = [w for w in words if w not in STOPWORDS and w not in set(domain_hits)]
+    combined = domain_hits + other
+    return list(dict.fromkeys(combined))[:12]
+
 def extract_pages(file_path: str) -> List[Tuple[int, str]]:
     #extract text and return page no and text
     reader = PdfReader(file_path)
@@ -123,7 +162,7 @@ def extract_tables(pdf_path: str) -> List[Tuple[int, List[str]]]:
 
 # skip header rows and metadata that pdfplumber picks up from non-content tables
 _TABLE_SKIP_RE = re.compile(
-    r"^(categories|consent\s+clause|consent\s+elements|summary\s+of\s+revisions"
+    r"^(categories|consent\s+clauses?|consent\s+elements|summary\s+of\s+revisions"
     r"|date\s+effective|deliverable|version|special\s+thanks|policy\s+number)",
     re.IGNORECASE,
 )
@@ -136,16 +175,23 @@ def table_rows_to_chunks(
     doc_type: str = "consent_toolkit",
 ) -> List[Dict[str, Any]]:
     chunks = []
+    last_topic = ""  # carry forward for merged cells
 
     for i, (pg_no, row) in enumerate(rows):
-        topic = (row[0] or "").strip() if len(row) > 0 else ""
-        clause = (row[1] or "").strip() if len(row) > 1 else ""
+        topic = (row[0] or "").strip().replace("\n", " ") if len(row) > 0 else ""
+        clause = (row[1] or "").strip().replace("\n", " ") if len(row) > 1 else ""
 
         if not clause or len(clause) < 20:
             continue
         # skip header/metadata rows
         if _TABLE_SKIP_RE.match(topic) or _TABLE_SKIP_RE.match(clause):
             continue
+
+        # carry forward topic from merged cells
+        if topic:
+            last_topic = topic
+        else:
+            topic = last_topic
 
         content = f"Topic: {topic}\nClause: {clause}"
         chunks.append(_make_chunk(
@@ -214,6 +260,7 @@ def _make_chunk(
     doc_type: str = "policy",
     document_name: str = "",
 ) -> Dict[str, Any]:
+    keywords = extract_keywords(f"{title} {content}")
     return {
         "document_name": document_name,
         "chunk_id": chunk_id,
@@ -224,6 +271,7 @@ def _make_chunk(
         "source_url": source,
         "page": page,
         "type": doc_type,
+        "keywords": keywords,
     }
 
 
@@ -333,7 +381,9 @@ def _postprocess_clauses(clauses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if len(c["content"]) > MAX_CLAUSE_CHARS:
             parts = splitter.split_text(c["content"])
             for idx, part in enumerate(parts, start=1):
-                result.append({**c, "chunk_id": f"{c['chunk_id']}_part{idx}", "content": part})
+                new_chunk = {**c, "chunk_id": f"{c['chunk_id']}_part{idx}", "content": part}
+                new_chunk["keywords"] = extract_keywords(f"{c['title']} {part}")
+                result.append(new_chunk)
         else:
             result.append(c)
     return result

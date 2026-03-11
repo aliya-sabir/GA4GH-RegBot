@@ -4,6 +4,44 @@ from bs4 import BeautifulSoup
 
 GA4GH_FRAMEWORK_URL = "https://www.ga4gh.org/framework/"
 
+STOPWORDS = {
+    "the","and","or","a","an","to","of","for","in","on",
+    "with","by","is","are","be","this","that","it","as","at",
+    "from","not","will","can","may","shall","should","would",
+    "has","have","had","been","was","were","its","their","they",
+    "you","your","we","our","any","all","each","such","which",
+    "who","what","when","where","how","than","but","about",
+    "into","through","during","before","after","between","also",
+    "only","very","just","there","here","other","more","most",
+    "some","does","did","these","those","own","same","both",
+    "being","could","might","nor","too","then","include",
+    "including","use","used","using","make","made","given",
+    "provide","provided","well","based","however","therefore",
+    "need","case","way","part","able","apply","whether",
+    "must","upon","within","without","take","set","per",
+    "one","two","even","already","many","next","still",
+}
+
+DOMAIN_TERMS = {
+    "withdrawal", "withdraw", "authorization", "informed", "participate",
+    "sequencing", "genome", "variant", "variants", "genes",
+    "anonymized", "pseudonymized", "identifiable", "coded", "linkage",
+    "breach", "confidentiality", "identification",
+    "oversight", "accountability", "governance", "regulatory", "lawful",
+    "incidental", "disclosure", "findings", "diagnosis", "diagnostic",
+    "safeguards", "datasets", "collection", "processing", "storage",
+    "familial", "minors",
+    "commercial", "discrimination", "recontact", "limitations",
+    "dissemination", "proportionate", "registries",
+}
+
+def _extract_keywords(text):
+    words = re.findall(r"[a-zA-Z]{3,}", text.lower())
+    domain_hits = [w for w in words if w in DOMAIN_TERMS]
+    other = [w for w in words if w not in STOPWORDS and w not in set(domain_hits)]
+    combined = domain_hits + other
+    return list(dict.fromkeys(combined))[:12]
+
 
 def fetch_chunks(URL:str = GA4GH_FRAMEWORK_URL) -> list[dict]:
     #Fetch document and exract all clauses including subclauses
@@ -70,6 +108,7 @@ def fetch_chunks(URL:str = GA4GH_FRAMEWORK_URL) -> list[dict]:
     
     for c in chunks:
         c['content'] = c['content'].strip()
+        c['keywords'] = _extract_keywords(f"{c['title']} {c['content']}")
     
     return chunks
 

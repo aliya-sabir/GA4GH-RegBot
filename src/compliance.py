@@ -22,6 +22,11 @@ def _load_display_names() -> Dict[str, str]:
 def _readable_citation(document_name: str, clause_number: str, display_map: Dict[str, str], title: str = "") -> str:
     #format a human-readable citation string
     display = display_map.get(document_name, document_name.replace("_", " ").title())
+    # for consent toolkit docs, title is more meaningful than section number
+    if title and any(x in document_name for x in
+                     ["consent_clauses", "consent_toolkit"]):
+        return f"{display} \u2013 {title.rstrip('.')}"
+
     clean = re.sub(r"_part(\d+)", r" (Part \1)", clause_number)
     clean = clean.replace("_", " ").rstrip(".")
     #en dash for readability 
@@ -54,23 +59,25 @@ class ComplianceChecker:
             f"CONSENT FORM:\n{user_consent_form}\n\n"
             f"RELEVANT GA4GH CLAUSES:\n{clause_context}\n\n"
             "TASK:\n"
-            "Compare the consent form against the clauses.\n\n"
-            "Identify:\n"
-            "• whether the form is compliant\n"
-            "• missing regulatory elements\n"
-            "• suggested improvements\n\n"
+            "Compare the consent form against each GA4GH clause above.\n"
+            "For each clause requirement that the consent form fails to address, describe WHAT is missing from the consent form in plain language.\n\n"
+            "RULES FOR missing_elements:\n"
+            "- Each element must describe a specific gap in the consent form (e.g. 'No disclosure of data sharing with third parties')\n"
+            "- Do NOT use clause titles or citation labels as missing elements\n"
+            "- Focus on what the consent form lacks, not which clause requires it\n\n"
+            "RULES FOR citations:\n"
+            "- Use the exact citation labels from the clauses above (text in square brackets)\n"
+            "- Include a short excerpt of the relevant clause text\n\n"
             "Return ONLY valid JSON in the format:\n\n"
             '{\n'
             '  "status": "Compliant | Partial | Non-Compliant",\n'
-            '  "missing_elements": ["list of missing requirements"],\n'
-            '  "suggested_fix": "short recommendation",\n'
+            '  "missing_elements": ["No description of what happens to samples after testing", "No withdrawal rights or data deletion procedure"],\n'
+            '  "suggested_fix": "1. Add disclosure of sample storage and data retention policy. 2. Include withdrawal rights with procedure for data deletion. (numbered list)",\n'
             '  "citations": [\n'
-            '    {"citation": "Document Name \u2013 Section X.Y", "title": "clause title", "excerpt": "relevant clause text"}\n'
+            '    {"citation": "Document Name \u2013 Topic", "title": "clause title", "excerpt": "relevant clause text"}\n'
             '  ]\n'
             '}\n\n'
-            "Do not include any text outside the JSON."
-            "Respond only with a single JSON object. Do not include preamble, explanation, or markdown. "
-            "JSON keys: status, missing_elements, suggested_fix, citations."
+            "Respond only with a single JSON object. Do not include preamble, explanation, or markdown."
         )
     
     def _extract_json(self, text: str) -> Dict[str, Any] | None:
@@ -122,6 +129,8 @@ class ComplianceChecker:
             return fallback
 
         parsed = self._extract_json(llm_output) 
-
+        if parsed is None:
+            print("DEBUG: JSON parse failed. Raw output:", llm_output[:300])
+            return fallback
         return parsed
     
