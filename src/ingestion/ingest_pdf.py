@@ -43,13 +43,17 @@ _PAGE_HEADER_RE = re.compile(
 )
 # repeated document title headers that were breaking parsing
 _DOC_TITLE_HEADERS = [
-    re.compile(r"^\s*\d{4}\s+POLICY\s+ON\s+.+$", re.IGNORECASE),
-    re.compile(r"^\s*POL\s+\d+\s+v[\d.]+.*$", re.IGNORECASE),
     re.compile(r"^\s*Global\s+Alliance\s+for\s+Genomics\s+(?:and|&)\s+Health.*$", re.IGNORECASE),
     re.compile(r"^\s*GA4GH\s+Data\s+Privacy\s+and\s+Security\s+Policy\s*$", re.IGNORECASE),
     re.compile(r"^\s*Framework\s+for\s+Responsible\s+Sharing\s+of\s+Genomic.*$", re.IGNORECASE),
-    re.compile(r"^\s*FRAMEWORK\s+FOR\s+INVOLVING\s+AND\s+ENGAGING.*$", re.IGNORECASE),
-    re.compile(r"^\s*Version\s+POL\s+\d+.*$", re.IGNORECASE),
+    re.compile(r"^\s*Clinical\s+Genomics\s*Consent\s+Clauses\s*$", re.IGNORECASE),
+    re.compile(r"^\s*Version[:\s].*\d{4}\s*$", re.IGNORECASE),
+    re.compile(r"^\s*Approved[:\s].*\d{4}\s*$", re.IGNORECASE),
+    re.compile(r"^\s*D\d{3}\w?\s*/\s*v\s*[\d.]+.*$", re.IGNORECASE),
+    re.compile(r"^\s*(?:Table:\s*)?Consent\s+Clauses\s+for\s+Large\s+Scale\s+Initiatives.*$", re.IGNORECASE),
+    re.compile(r"^\s*Nguyen\s+et\s+al\..*BMC\s+Medical\s+Ethics.*$", re.IGNORECASE),
+    re.compile(r"^\s*https?://doi\.org/.*$", re.IGNORECASE),
+    re.compile(r"^\s*R\s+E\s+S\s+E\s+A\s+R\s+C\s+H\s+A\s+R\s+T\s+I\s+C\s+L\s+E.*$", re.IGNORECASE),
 ]
 
 #irrelevant sections common in many docs
@@ -58,18 +62,12 @@ IGNORE_TITLES = [
     "references",
     "contributors",
     "revision history",
-    "resources",
     "appendix",
-    "background",
-    "purpose",
-    "introduction",
-    "overview",
     "context",
     "preamble",
     "conclusion",
-    "discussion",
     "implementation mechanisms and amendments",
-    "framework genesis and purpose",
+    "deliverable revision history",
 ]
 
 #removing appendix sections

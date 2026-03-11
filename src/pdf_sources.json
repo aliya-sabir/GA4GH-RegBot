@@ -33,5 +33,10 @@
     "document_name": "rare_disease_consent_clauses",
     "display_name": "GA4GH Model Consent Clauses for Rare Disease Research",
     "source_url": "https://www.ga4gh.org/wp-content/uploads/Model-consent-clauses-for-rare-disease-research.pdf"
+  },
+  "Pediatric-Consent-to-Genetic-Research_-Clauses-1-1.pdf": {
+    "document_name": "pediatric_consent_clauses",
+    "display_name": "GA4GH Pediatric Consent to Genetic Research Clauses",
+    "source_url": "https://www.ga4gh.org/wp-content/uploads/Pediatric-Consent-to-Genetic-Research_-Clauses-1-1.pdf"
   }
 }
