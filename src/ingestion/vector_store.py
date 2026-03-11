@@ -31,7 +31,7 @@ class VectorStore:
         for i in range(0, len(chunks), INGEST_BATCH):
             batch = chunks[i : i + INGEST_BATCH]
             ids = [
-                f"{c['document_name']}_{c['chunk_id']}_{i + j}"
+                f"{c.get('document_name', '')}_{c['chunk_id']}_{i + j}"
                 for j, c in enumerate(batch)
             ]
             docs = [c["content"] for c in batch]

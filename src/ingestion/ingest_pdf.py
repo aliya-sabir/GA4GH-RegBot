@@ -167,7 +167,6 @@ def extract_pdf_text(file_path: str) -> str:
     return "\n".join(text for _, text in extract_pages(file_path))
 
 
-
 def _clean_title(title: str) -> str:
     #strip trailing dots, zero-width chars, leading/trailing whitespace
     return title.strip().strip(".")

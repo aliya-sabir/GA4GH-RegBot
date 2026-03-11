@@ -1,7 +1,6 @@
 import re
 import requests
 from bs4 import BeautifulSoup
-from typing import List, Dict
 
 GA4GH_FRAMEWORK_URL = "https://www.ga4gh.org/framework/"
 
@@ -40,6 +39,8 @@ def fetch_chunks(URL:str = GA4GH_FRAMEWORK_URL) -> list[dict]:
                     "parent_id": None,
                     "level": "section",
                     "source_url": URL,
+                    "type": "policy",
+                    "document_name": "framework",
                 }
             else:
                 current_section=None
@@ -54,6 +55,8 @@ def fetch_chunks(URL:str = GA4GH_FRAMEWORK_URL) -> list[dict]:
                     "parent_id": current_section["chunk_id"],
                     "level": "subsection",
                     "source_url": URL,
+                    "type": "policy",
+                    "document_name": "framework",
                 })
         elif el.name in ["p", "ul", "ol"]:
             if current_subsections:

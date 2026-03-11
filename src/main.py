@@ -35,7 +35,7 @@ class RegBot:
         print("Initializing RegBot Core...")
 
     def load_llm(self):
-        #Initialize hugging Face API client.
+        #initialize hugging Face API client.
 
         self.client = InferenceClient(
             model=self.model_name,
