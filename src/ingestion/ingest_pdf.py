@@ -71,10 +71,12 @@ IGNORE_TITLES = [
     "deliverable revision history",
 ]
 
+
 #removing appendix sections
 def _ignore_fluff(title: str):
     t = title.lower()
     return any(ig in t for ig in IGNORE_TITLES)
+
 
 def _is_header_or_footer(line: str) -> bool:
     stripped = line.strip()
@@ -318,6 +320,7 @@ def parse_clauses(
             chunks.append(current_section)
         current_section = None
 
+
     for raw_line in lines:
         #mutiple spaces replaced with single space 
         line = re.sub(r"\s+", " ", raw_line).strip()
@@ -329,7 +332,7 @@ def parse_clauses(
             level = heading["level"]
             cid = heading["id"]
 
-             #appendices are not helpful even as fallback text so raising a flag to ignore all of them
+            #appendices are not helpful even as fallback text so raising a flag to ignore all of them
             if _ignore_fluff(heading["title"]):
                 _flush_section()
                 ignore_mode = True

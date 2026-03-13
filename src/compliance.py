@@ -54,33 +54,33 @@ class ComplianceChecker:
         )
 
         return (
-            "You are a regulatory compliance assistant.\n\n"
-            "Evaluate whether the following consent form complies with GA4GH regulatory clauses.\n\n"
-            f"CONSENT FORM:\n{user_consent_form}\n\n"
-            f"RELEVANT GA4GH CLAUSES:\n{clause_context}\n\n"
-            "TASK:\n"
-            "Compare the consent form against each GA4GH clause above.\n"
-            "For each clause requirement that the consent form fails to address, describe WHAT is missing from the consent form in plain language.\n\n"
-            "RULES FOR missing_elements:\n"
-            "- Each element must describe a specific gap in the consent form (e.g. 'No disclosure of data sharing with third parties')\n"
-            "- Do NOT use clause titles or citation labels as missing elements\n"
-            "- Focus on what the consent form lacks, not which clause requires it\n\n"
-            "RULES FOR citations:\n"
-            "- Use the exact citation labels from the clauses above (text in square brackets)\n"
-            "- Include the source URL from the clause (text after 'source:')\n"
-            "- Include a short excerpt of the relevant clause text\n\n"
-            "Return ONLY valid JSON in the format:\n\n"
+            "You are a regulatory compliance assistant for genomic data consent forms.\n\n"
+            "CONSENT FORM TO EVALUATE:\n"
+            f"{user_consent_form}\n\n"
+            "RELEVANT GA4GH REGULATORY CLAUSES:\n"
+            f"{clause_context}\n\n"
+            "INSTRUCTIONS:\n"
+            "Step 1 — Read the consent form carefully and identify what topics it DOES cover.\n"
+            "Step 2 — For each GA4GH clause above, determine whether the consent form adequately addresses that requirement.\n"
+            "Step 3 — List only requirements that the consent form FAILS to address or addresses inadequately.\n\n"
+            "STRICT RULES:\n"
+            "- A missing element must be something ABSENT from the consent form, not just mentioned in a clause.\n"
+            "- If the consent form addresses a topic even partially, do NOT list it as missing.\n"
+            "- Do NOT list items that are present in the consent form.\n"
+            "- Each missing element must describe the gap in the consent form in plain language.\n"
+            "- Do NOT use clause titles as missing elements.\n"
+            "Return ONLY valid JSON:\n"
             '{\n'
             '  "status": "Compliant | Partial | Non-Compliant",\n'
-            '  "missing_elements": ["No description of what happens to samples after testing", "No withdrawal rights or data deletion procedure"],\n'
-            '  "suggested_fix": "1. Add disclosure of sample storage and data retention policy. 2. Include withdrawal rights with procedure for data deletion. (numbered list)",\n'
+            '  "missing_elements": ["specific gap in consent form language"],\n'
+            '  "suggested_fix": "1. numbered specific action. 2. numbered specific action.",\n'
             '  "citations": [\n'
-            '    {"citation": "Document Name \u2013 Topic", "source_url": "https://...", "title": "clause title", "excerpt": "relevant clause text"}\n'
+            '    {"citation": "exact label from brackets", "source_url": "...", '
+            '"title": "clause title", "excerpt": "exact clause text"}\n'
             '  ]\n'
             '}\n\n'
-            "Respond only with a single JSON object. Do not include preamble, explanation, or markdown."
+            "Respond only with the JSON object. No preamble, no markdown."
         )
-    
     def _extract_json(self, text: str) -> Dict[str, Any] | None:
         match = re.search(r"\{.*\}", text, re.DOTALL)
         if not match:

@@ -1,16 +1,17 @@
 from pathlib import Path
 from typing import Any, Dict, List
-
+from rank_bm25 import BM25Okapi
+import re
 import chromadb
 from sentence_transformers import SentenceTransformer, CrossEncoder
 
 CHROMA_DIR = str(Path(__file__).parent.parent / "chroma_db")
 COLLECTION_NAME = "ga4gh_chunks"
-INGEST_BATCH = 64  # documents per ChromaDB add call
+INGEST_BATCH = 64 
 
 
 def _build_search_text(chunk: Dict[str, Any]) -> str:
-    """Enrich content with document name, title, and keywords for better embedding."""
+    #enrich content with document name, title, and keywords
     parts = []
     if chunk.get("document_name"):
         parts.append(f"Document: {chunk['document_name']}")
@@ -22,12 +23,18 @@ def _build_search_text(chunk: Dict[str, Any]) -> str:
         parts.append(f"Keywords: {', '.join(chunk['keywords'])}")
     return "\n".join(parts)
 
+def _tokenize(text: str) -> List[str]:
+    return re.findall(r"[a-zA-Z0-9\-]+", text.lower())
+
 class VectorStore:
 
     def __init__(self, embedding_model: SentenceTransformer):
         self.embedding_model = embedding_model
         self.reranker = CrossEncoder('sentence-transformers/msmarco-MiniLM-L-12-v3')
         self.client = chromadb.PersistentClient(path=CHROMA_DIR)
+  
+        self._bm25 = None
+        self._bm25_chunks = []
         self.collection = self.client.get_or_create_collection(
             name=COLLECTION_NAME,
             metadata={"hnsw:space": "cosine"},
@@ -70,6 +77,13 @@ class VectorStore:
                 embeddings=embeddings,
             )
             stored += len(batch)
+        
+        # build BM25 index once after ingest
+        if chunks:
+            tokenized = [_tokenize(_build_search_text(c)) for c in chunks]
+            self._bm25 = BM25Okapi(tokenized)
+            self._bm25_chunks = chunks
+
         return stored
 
     def query(self, query_text: str, top_k: int = 10) -> List[Dict[str, Any]]:
@@ -101,6 +115,26 @@ class VectorStore:
                 "page": meta.get("page", 0),
             })
 
+        if self._bm25:
+            scores = self._bm25.get_scores(_tokenize(query_text))
+            top_indices = sorted(
+                range(len(scores)),
+                key=lambda i: scores[i],
+                reverse=True
+            )[:top_k*2]
+            for i in top_indices:
+                c = self._bm25_chunks[i]
+                clauses.append({
+                    "document_name": c.get("document_name", ""),
+                    "clause_number": c.get("chunk_id", ""),
+                    "title": c.get("title", ""),
+                    "text": c["content"],
+                    "similarity": None,
+                    "bm25_score": round(float(scores[i]), 4),
+                    "source": c.get("source_url", ""),
+                    "page": c.get("page", 0),
+                })
+
         #change 2: added reranker for better relevance
         if self.reranker:
             scores = self.reranker.predict([(query_text, c["text"]) for c in clauses])
@@ -110,13 +144,22 @@ class VectorStore:
 
         #return clauses[:top_k]
 
-        #deduplicate: keep highest-ranked chunk per doc
-        #future improvement dedup using jacard similarity
+        #deduplicate: keep highest-ranked chunk per doc+clause_number
+        #avoid dropping distinct clauses that share titles
         seen = set()
         deduped = []
+
         for c in clauses:
-            key = (c["document_name"], c["title"])
+            doc = c.get("document_name", "")
+            clause = c.get("clause_number") or c.get("chunk_id")
+
+            if not clause:
+                clause = hash(c.get("text", ""))
+
+            key = f"{doc}::{clause}"
+
             if key not in seen:
                 seen.add(key)
                 deduped.append(c)
+
         return deduped[:top_k]
