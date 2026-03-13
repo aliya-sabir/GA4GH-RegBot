@@ -29,7 +29,7 @@ class RegBot:
             raise ValueError("HF_TOKEN not found")
         
         self.model_name = model_name
-        self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+        self.embedding_model = SentenceTransformer('BAAI/bge-base-en-v1.5')
         self.store = VectorStore(self.embedding_model)
         self.load_llm()
         print("Initializing RegBot Core...")

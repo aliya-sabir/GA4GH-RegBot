@@ -69,7 +69,11 @@ class VectorStore:
                 }
                 for c in batch
             ]
-            embeddings = self.embedding_model.encode(docs).tolist()
+            embeddings = self.embedding_model.encode(
+                docs,
+                batch_size=32,
+                show_progress_bar=False
+            ).tolist()
             self.collection.upsert(
                 ids=ids,
                 documents=docs,
@@ -91,7 +95,10 @@ class VectorStore:
         if self.collection.count() == 0:
             return []
 
-        query_embedding = self.embedding_model.encode(query_text).tolist()
+        # Use BGE-style instruction prefix for queries
+        query_embedding = self.embedding_model.encode(
+            "Represent this sentence for searching relevant passages: " + query_text
+        ).tolist()
         results = self.collection.query(
             query_embeddings=[query_embedding],
             n_results=top_k*3,   #added more results for reranker
