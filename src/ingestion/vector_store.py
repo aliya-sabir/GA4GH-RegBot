@@ -23,6 +23,31 @@ def _build_search_text(chunk: Dict[str, Any]) -> str:
         parts.append(f"Keywords: {', '.join(chunk['keywords'])}")
     return "\n".join(parts)
 
+# Deduplicate clauses for retrieval
+def deduplicate_clauses(clauses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Deduplicate clauses while preserving:
+    - Different parts of the same clause (e.g., 5_part1, 5_part2)
+    - Different text under the same clause_number (important for tables or version differences)
+    """
+    seen_texts = set()
+    deduped = []
+
+    for c in clauses:
+        # Normalize text for comparison
+        text_key = (c.get("text") or "").strip().lower()
+        if not text_key:
+            continue
+
+        if text_key not in seen_texts:
+            seen_texts.add(text_key)
+            deduped.append(c)
+        else:
+            # Already seen exact text; skip
+            continue
+
+    return deduped
+
 def _tokenize(text: str) -> List[str]:
     return re.findall(r"[a-zA-Z0-9\-]+", text.lower())
 
@@ -30,7 +55,7 @@ class VectorStore:
 
     def __init__(self, embedding_model: SentenceTransformer):
         self.embedding_model = embedding_model
-        self.reranker = CrossEncoder('sentence-transformers/msmarco-MiniLM-L-12-v3')
+        self.reranker = CrossEncoder('BAAI/bge-reranker-base')
         self.client = chromadb.PersistentClient(path=CHROMA_DIR)
   
         self._bm25 = None
@@ -59,6 +84,7 @@ class VectorStore:
             metas = [
                 {
                     "document_name": c.get("document_name", ""),
+                    "clause_id": c.get("clause_id", c["chunk_id"]),
                     "chunk_id": c["chunk_id"],
                     "title": c.get("title", ""),
                     "content": c["content"],
@@ -114,7 +140,7 @@ class VectorStore:
         ):
             clauses.append({
                 "document_name": meta.get("document_name", ""),
-                "clause_number": meta.get("chunk_id", ""),
+                "clause_number": meta.get("clause_id", meta.get("chunk_id", "")),
                 "title": meta.get("title", ""),
                 "text": meta.get("content", doc),
                 "similarity": round(1 - dist, 4),
@@ -133,7 +159,7 @@ class VectorStore:
                 c = self._bm25_chunks[i]
                 clauses.append({
                     "document_name": c.get("document_name", ""),
-                    "clause_number": c.get("chunk_id", ""),
+                    "clause_number": c.get("clause_id", c.get("chunk_id", "")),
                     "title": c.get("title", ""),
                     "text": c["content"],
                     "similarity": None,
@@ -144,7 +170,10 @@ class VectorStore:
 
         #change 2: added reranker for better relevance
         if self.reranker:
-            scores = self.reranker.predict([(query_text, c["text"]) for c in clauses])
+            scores = self.reranker.predict([
+                (query_text, f"{c.get('title', '')}\n{c.get('text', '')}")
+                for c in clauses
+            ])
             for c, score in zip(clauses, scores):
                 c["rerank_score"] = round(score, 4)
             clauses.sort(key=lambda x: x["rerank_score"], reverse=True)
@@ -153,20 +182,7 @@ class VectorStore:
 
         #deduplicate: keep highest-ranked chunk per doc+clause_number
         #avoid dropping distinct clauses that share titles
-        seen = set()
-        deduped = []
+        
+        deduped_clauses = deduplicate_clauses(clauses)
 
-        for c in clauses:
-            doc = c.get("document_name", "")
-            clause = c.get("clause_number") or c.get("chunk_id")
-
-            if not clause:
-                clause = hash(c.get("text", ""))
-
-            key = f"{doc}::{clause}"
-
-            if key not in seen:
-                seen.add(key)
-                deduped.append(c)
-
-        return deduped[:top_k]
+        return deduped_clauses[:top_k]

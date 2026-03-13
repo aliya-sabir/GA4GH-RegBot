@@ -264,6 +264,7 @@ def _make_chunk(
     keywords = extract_keywords(f"{title} {content}")
     return {
         "document_name": document_name,
+        "clause_id": chunk_id,
         "chunk_id": chunk_id,
         "title": title,
         "content": content.strip(),
