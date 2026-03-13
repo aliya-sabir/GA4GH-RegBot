@@ -1,6 +1,7 @@
 import json
 import sys
 import re
+import pdfplumber
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -8,9 +9,15 @@ from pypdf import PdfReader
 
 SOURCES_CONFIG = Path(__file__).parent.parent / "pdf_sources.json"
 
+#change 1: experimented with chunk size
+
 CHUNK_SIZE = 700
 CHUNK_OVERLAP = 120
 MAX_CLAUSE_CHARS = 1500
+
+# CHUNK_SIZE = 400 
+# CHUNK_OVERLAP = 80 
+# MAX_CLAUSE_CHARS = 800 
 
 splitter = RecursiveCharacterTextSplitter(
     chunk_size=CHUNK_SIZE,
@@ -18,23 +25,119 @@ splitter = RecursiveCharacterTextSplitter(
     separators=["\n\n", "\n", ". ", " "],
 )
 
+#for pattern matching of clause numbers in different formats 
 _ROMAN = r"(?:(?:X{1,3}(?:IX|IV|V?I{0,3})|IX|IV|V?I{1,3}|VI{0,3}))"
 
 SUB_SUBSECTION_PATTERN = re.compile(r"^(\d+\.\d+\.\d+)\.?\s+(.+)$")
 SUBSECTION_PATTERN = re.compile(r"^(\d+\.\d+)\.?\s+(.+)$")
 SECTION_PATTERN = re.compile(r"^(\d+)[\.\s]+(.+)$")
-ROMAN_SECTION_PATTERN = re.compile(rf"^({_ROMAN})\.?\s+(.+)$", re.IGNORECASE)
+ROMAN_SECTION_PATTERN = re.compile(rf"^({_ROMAN})\.\s+(.+)$", re.IGNORECASE)
 MIXED_PATTERN = re.compile(rf"^(\d+)\.({_ROMAN})\.?\s+(.+)$", re.IGNORECASE) #some pdfs have a mix of numeric systems
 
+#change 4: added more patterns to ignore such as headers footers and common irrelevant sections
+#for cleaning up pages headers and footers 
+
+_PAGE_NUMBER_RE = re.compile(r"^\s*\d{1,3}\s*$")
+# spaced-out capital headers 
+_PAGE_HEADER_RE = re.compile(
+    r"^\d*\s*[A-Z]\s+[A-Z]+(?:\s+[A-Z]\s*[A-Z]+)*\s*$"
+)
+# repeated document title headers that were breaking parsing
+_DOC_TITLE_HEADERS = [
+    re.compile(r"^\s*Global\s+Alliance\s+for\s+Genomics\s+(?:and|&)\s+Health.*$", re.IGNORECASE),
+    re.compile(r"^\s*GA4GH\s+Data\s+Privacy\s+and\s+Security\s+Policy\s*$", re.IGNORECASE),
+    re.compile(r"^\s*Framework\s+for\s+Responsible\s+Sharing\s+of\s+Genomic.*$", re.IGNORECASE),
+    re.compile(r"^\s*Clinical\s+Genomics\s*Consent\s+Clauses\s*$", re.IGNORECASE),
+    re.compile(r"^\s*Version[:\s].*\d{4}\s*$", re.IGNORECASE),
+    re.compile(r"^\s*Approved[:\s].*\d{4}\s*$", re.IGNORECASE),
+    re.compile(r"^\s*D\d{3}\w?\s*/\s*v\s*[\d.]+.*$", re.IGNORECASE),
+    re.compile(r"^\s*(?:Table:\s*)?Consent\s+Clauses\s+for\s+Large\s+Scale\s+Initiatives.*$", re.IGNORECASE),
+    re.compile(r"^\s*Nguyen\s+et\s+al\..*BMC\s+Medical\s+Ethics.*$", re.IGNORECASE),
+    re.compile(r"^\s*https?://doi\.org/.*$", re.IGNORECASE),
+    re.compile(r"^\s*R\s+E\s+S\s+E\s+A\s+R\s+C\s+H\s+A\s+R\s+T\s+I\s+C\s+L\s+E.*$", re.IGNORECASE),
+]
+
+#irrelevant sections common in many docs
+IGNORE_TITLES = [
+    "acknowledgements",
+    "references",
+    "contributors",
+    "revision history",
+    "appendix",
+    "context",
+    "preamble",
+    "conclusion",
+    "implementation mechanisms and amendments",
+    "deliverable revision history",
+]
+
+
+#removing appendix sections
+def _ignore_fluff(title: str):
+    t = title.lower()
+    return any(ig in t for ig in IGNORE_TITLES)
+
+
+def _is_header_or_footer(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if _PAGE_NUMBER_RE.match(stripped):
+        return True
+    if _PAGE_HEADER_RE.match(stripped):
+        return True
+    return any(pattern.match(stripped) for pattern in _DOC_TITLE_HEADERS)
 
 def _clean_text(text: str) -> str:
     #normalize bullet points, zero-width spaces, and excess whitespace
-    text = text.replace("\u200b", "")  # zero-width spaces
-    text = re.sub(r"[\u2022\u25cf\u25a0\u25aa\u25b8\u25ba]\s*", "", text)  # bullet chars
-    text = re.sub(r"[^\S\n]+", " ", text)  # collapse spaces/tabs but keep newlines
-    text = re.sub(r"\n{3,}", "\n\n", text)  # collapse excessive blank lines
-    return text.strip()
+    text = text.replace("\u200b", "") 
+    text = re.sub(r"[\u2022\u25cf\u25a0\u25aa\u25b8\u25ba]\s*", "", text) 
+    text = re.sub(r"[^\S\n]+", " ", text) 
+    text = re.sub(r"\n{3,}", "\n\n", text) 
 
+    lines = text.split("\n")
+    cleaned_lines = [line for line in lines if not _is_header_or_footer(line)]
+
+    return "\n".join(cleaned_lines).strip()
+
+#change 5: added keywords as well for hybrid retrieval
+STOPWORDS = {
+    "the","and","or","a","an","to","of","for","in","on",
+    "with","by","is","are","be","this","that","it","as","at",
+    "from","not","will","can","may","shall","should","would",
+    "has","have","had","been","was","were","its","their","they",
+    "you","your","we","our","any","all","each","such","which",
+    "who","what","when","where","how","than","but","about",
+    "into","through","during","before","after","between","also",
+    "only","very","just","there","here","other","more","most",
+    "some","does","did","these","those","own","same","both",
+    "being","could","might","nor","too","then","include",
+    "including","use","used","using","make","made","given",
+    "provide","provided","well","based","however","therefore",
+    "need","case","way","part","able","apply","whether",
+    "must","upon","within","without","take","set","per",
+    "one","two","even","already","many","next","still",
+}
+
+DOMAIN_TERMS = {
+    "withdrawal", "withdraw", "authorization", "informed", "participate",
+    "sequencing", "genome", "variant", "variants", "genes",
+    "anonymized", "pseudonymized", "identifiable", "coded", "linkage",
+    "breach", "confidentiality", "identification",
+    "oversight", "accountability", "governance", "regulatory", "lawful",
+    "incidental", "disclosure", "findings", "diagnosis", "diagnostic",
+    "safeguards", "datasets", "collection", "processing", "storage",
+    "familial", "minors",
+    "commercial", "discrimination", "recontact", "limitations",
+    "dissemination", "proportionate", "registries",
+}
+
+def extract_keywords(text: str) -> List[str]:
+    words = re.findall(r"[a-zA-Z]{3,}", text.lower())
+    domain_hits = [w for w in words if w in DOMAIN_TERMS]
+    other = [w for w in words if w not in STOPWORDS and w not in set(domain_hits)]
+    combined = domain_hits + other
+    return list(dict.fromkeys(combined))[:12]
 
 def extract_pages(file_path: str) -> List[Tuple[int, str]]:
     #extract text and return page no and text
@@ -46,28 +149,78 @@ def extract_pages(file_path: str) -> List[Tuple[int, str]]:
             pages.append((i, _clean_text(text)))
     return pages
 
+def extract_tables(pdf_path: str) -> List[Tuple[int, List[str]]]:
+    #the consent toolkit docs contain tables 
+    rows = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for pg_no, page in enumerate(pdf.pages, start=1):
+            tables = page.extract_tables()
+
+            for table in tables:
+                for row in table:
+                    if row:
+                        rows.append((pg_no,row))
+    return rows
+
+# skip header rows and metadata that pdfplumber picks up from non-content tables
+_TABLE_SKIP_RE = re.compile(
+    r"^(categories|consent\s+clauses?|consent\s+elements|summary\s+of\s+revisions"
+    r"|date\s+effective|deliverable|version|special\s+thanks|policy\s+number)",
+    re.IGNORECASE,
+)
+
+def table_rows_to_chunks(
+    #making chunks out of extracted tables
+    rows: List[Tuple[int, List[str]]],
+    source: str,
+    document_name: str,
+    doc_type: str = "consent_toolkit",
+) -> List[Dict[str, Any]]:
+    chunks = []
+    last_topic = "" 
+
+    for i, (pg_no, row) in enumerate(rows):
+        topic = (row[0] or "").strip().replace("\n", " ") if len(row) > 0 else ""
+        clause = (row[1] or "").strip().replace("\n", " ") if len(row) > 1 else ""
+
+        if not clause or len(clause) < 20:
+            continue
+        # skip header/metadata rows
+        if _TABLE_SKIP_RE.match(topic) or _TABLE_SKIP_RE.match(clause):
+            continue
+
+        # carry forward topic from merged cells
+        if topic:
+            last_topic = topic
+        else:
+            topic = last_topic
+
+        content = f"Topic: {topic}\nClause: {clause}"
+        chunks.append(_make_chunk(
+            chunk_id=f"table_{i}",
+            title=topic,
+            content=content,
+            parent_id=None,
+            level="consent_clause",
+            source=source,
+            page=pg_no,
+            doc_type=doc_type,
+            document_name=document_name,
+        ))
+    return chunks
+
 
 def extract_pdf_text(file_path: str) -> str:
-    #return cobined text 
+    #return combined text 
     return "\n".join(text for _, text in extract_pages(file_path))
 
 
-# page headers/footers to ignore
-_PAGE_HEADER_RE = re.compile(
-    r"^\d*\s*[A-Z]\s+[A-Z]+(?:\s+[A-Z]\s*[A-Z]+)*\s*$"
-)  # e.g. "2 C ONSENT P OLICY"
-
-
 def _clean_title(title: str) -> str:
-    #strip trailing dots, zero-width chars, leading/trailing whitespace
     return title.strip().strip(".")
 
 
 def _match_heading(line: str) -> Optional[Dict[str, str]]:
     #matches against section numbering patterns
-    if _PAGE_HEADER_RE.match(line):
-        return None
-
     m = SUB_SUBSECTION_PATTERN.match(line)
     if m:
         return {"id": m.group(1), "title": _clean_title(m.group(2)),
@@ -108,6 +261,7 @@ def _make_chunk(
     doc_type: str = "policy",
     document_name: str = "",
 ) -> Dict[str, Any]:
+    keywords = extract_keywords(f"{title} {content}")
     return {
         "document_name": document_name,
         "chunk_id": chunk_id,
@@ -118,6 +272,7 @@ def _make_chunk(
         "source_url": source,
         "page": page,
         "type": doc_type,
+        "keywords": keywords,
     }
 
 
@@ -148,6 +303,7 @@ def parse_clauses(
     current_section: Optional[Dict[str, Any]] = None
     current_sub: Optional[Dict[str, Any]] = None
     section_ids: Dict[str, str] = {}
+    ignore_mode = False
 
     def _flush_sub():
         nonlocal current_sub
@@ -164,6 +320,7 @@ def parse_clauses(
             chunks.append(current_section)
         current_section = None
 
+
     for raw_line in lines:
         #mutiple spaces replaced with single space 
         line = re.sub(r"\s+", " ", raw_line).strip()
@@ -175,6 +332,13 @@ def parse_clauses(
             level = heading["level"]
             cid = heading["id"]
 
+            #appendices are not helpful even as fallback text so raising a flag to ignore all of them
+            if _ignore_fluff(heading["title"]):
+                _flush_section()
+                ignore_mode = True
+                continue
+
+            ignore_mode = False
             if level == "section":
                 _flush_section()
                 current_section = _make_chunk(
@@ -199,6 +363,8 @@ def parse_clauses(
                 section_ids[cid] = cid
             continue
 
+        if ignore_mode:
+            continue
         if current_sub is not None:
             current_sub["content"] += " " + line
         elif current_section is not None:
@@ -217,7 +383,9 @@ def _postprocess_clauses(clauses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if len(c["content"]) > MAX_CLAUSE_CHARS:
             parts = splitter.split_text(c["content"])
             for idx, part in enumerate(parts, start=1):
-                result.append({**c, "chunk_id": f"{c['chunk_id']}_part{idx}", "content": part})
+                new_chunk = {**c, "chunk_id": f"{c['chunk_id']}_part{idx}", "content": part}
+                new_chunk["keywords"] = extract_keywords(f"{c['title']} {part}")
+                result.append(new_chunk)
         else:
             result.append(c)
     return result
@@ -266,7 +434,7 @@ def _assign_pages(
 def _page_overlap_fallback(
     file_path: str,
     source: str,
-    doc_type: str = "policy",
+    doc_type: str,
     document_name: str = "",
 ) -> List[Dict[str, Any]]:
     #last resort fallback split each page's text
@@ -293,7 +461,7 @@ def _page_overlap_fallback(
 
 def fetch_pdf_chunks(
     file_path: str,
-    doc_type: str = "policy",
+    doc_type: str,
     source_url: Optional[str] = None,
     document_name: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
@@ -313,16 +481,27 @@ def fetch_pdf_chunks(
 
     clauses = _postprocess_clauses(clauses)
 
-    fallback = _fallback_chunks(unclaimed, source, doc_type=doc_type,
-                                document_name=doc_name) if unclaimed else []
+    # extract table-based consent clauses (consent toolkit docs only)
+    table_chunks = []
+    if doc_type == "consent_toolkit":
+        table_rows = extract_tables(file_path)
+        table_chunks = table_rows_to_chunks(table_rows, source, doc_name, doc_type) if table_rows else []
 
-    if not clauses and not fallback:
+    #change 3: removed fallback text to avoid noise in retrieval
+    """fallback = _fallback_chunks(unclaimed, source, doc_type=doc_type,
+                                document_name=doc_name) if unclaimed else []"""
+    fallback = []
+
+    """if not clauses and not fallback:
         print(f"Warning: No clauses or text found in {source}.")
         fallback = _page_overlap_fallback(file_path, source, doc_type,
-                                          document_name=doc_name)
+                                          document_name=doc_name)"""
+    if not clauses and not table_chunks:
+        print(f"Warning: No clauses detected in {source}. Skipping document.")
+        return []
 
-    combined = clauses + fallback
-    print(f"  {source}: {len(clauses)} clause chunk(s) + {len(fallback)} fallback chunk(s)")
+    combined = clauses + table_chunks + fallback
+    print(f"  {source}: {len(clauses)} clause chunk(s) + {len(table_chunks)} table chunk(s) + {len(fallback)} fallback chunk(s)")
     return combined
 
 
@@ -336,7 +515,6 @@ def _load_source_config() -> Dict[str, Dict[str, str]]:
 
 def fetch_all_pdfs(
     directory: str,
-    doc_type: str = "policy",
 ) -> List[Dict[str, Any]]:
     #ingest all PDFs in a directory
     pdf_dir = Path(directory)
@@ -346,12 +524,15 @@ def fetch_all_pdfs(
 
     source_map = _load_source_config()
     all_chunks: List[Dict[str, Any]] = []
-    #sorting for reproducibility 
+
     for pdf_file in sorted(pdf_dir.glob("*.pdf")):
+        #sorting for reproducibility 
         print(f"Ingesting: {pdf_file.name}")
         cfg = source_map.get(pdf_file.name, {})
+        doc_type = cfg.get("doc_type","policy")
         all_chunks.extend(fetch_pdf_chunks(
-            str(pdf_file), doc_type,
+            str(pdf_file), 
+            doc_type,
             source_url=cfg.get("source_url"),
             document_name=cfg.get("document_name"),
         ))
@@ -366,7 +547,9 @@ if __name__ == "__main__":
     pdf_path = sys.argv[1] if len(sys.argv) > 1 else None
 
     if pdf_path:
-        chunks = fetch_pdf_chunks(pdf_path)
+        source_map = _load_source_config()
+        cfg = source_map.get(Path(pdf_path).name, {})
+        chunks = fetch_pdf_chunks(pdf_path, doc_type=cfg.get("doc_type", "policy"))
     else:
         chunks = fetch_all_pdfs(docs_dir)
 

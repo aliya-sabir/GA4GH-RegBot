@@ -9,6 +9,7 @@ from sentence_transformers import SentenceTransformer
 
 from compliance import ComplianceChecker, _readable_citation, _load_display_names
 from ingestion import fetch_chunks, fetch_pdf_chunks, fetch_all_pdfs, VectorStore
+from ingestion.ingest_pdf import _load_source_config
 
 URL = "https://www.ga4gh.org/framework/"
 
@@ -21,7 +22,7 @@ class RegBot:
     def __init__(
         self, 
         api_key: Optional[str] = None,
-        model_name: str = "meta-llama/Llama-3.1-8B-Instruct"
+        model_name: str = "meta-llama/Llama-3.3-70B-Instruct"
     ):
         self.api_key = api_key or os.getenv("HF_TOKEN")
         if not self.api_key:
@@ -34,7 +35,7 @@ class RegBot:
         print("Initializing RegBot Core...")
 
     def load_llm(self):
-        #Initialize hugging Face API client.
+        #initialize hugging Face API client.
 
         self.client = InferenceClient(
             model=self.model_name,
@@ -54,7 +55,8 @@ class RegBot:
         if path.is_dir():
             chunks = fetch_all_pdfs(source)
         elif path.is_file() and path.suffix.lower() == ".pdf":
-            chunks = fetch_pdf_chunks(source)
+            cfg = _load_source_config().get(path.name, {})
+            chunks = fetch_pdf_chunks(source, doc_type=cfg.get("doc_type", "policy"))
         else:
             chunks = fetch_chunks(source)
 
@@ -67,7 +69,7 @@ class RegBot:
         print(f"Stored {stored} chunks in ChromaDB.")
         return stored
 
-    def retrieve_relevant_clauses(self, user_query: str, top_k: int = 3) -> List[Dict[str, Any]]:
+    def retrieve_relevant_clauses(self, user_query: str, top_k: int = 10) -> List[Dict[str, Any]]:
         """
         Phase 2: RAG Implementation.
         Query ChromaDB for clauses relevant to the user's consent form.
@@ -78,7 +80,7 @@ class RegBot:
             print("Warning: ChromaDB collection is empty — run ingest first.")
         return results
 
-    def check_compliance(self, user_consent_form: str, clauses: List[Dict[str,str]], top_k: int = 3) -> dict:
+    def check_compliance(self, user_consent_form: str, clauses: List[Dict[str,str]], top_k: int = 10) -> dict:
         """
         Phase 3: LLM Analysis.
         Compares user input against retrieved GA4GH clauses.
@@ -94,7 +96,7 @@ if __name__ == "__main__":
     
     # Test retrieval with sample query
     query = "We will obtain explicit consent from participants for data sharing and secondary research."
-    retrieved_clauses = bot.retrieve_relevant_clauses(query, top_k=3)
+    retrieved_clauses = bot.retrieve_relevant_clauses(query, top_k=10)
     
     print(f"\nTop {len(retrieved_clauses)} relevant clauses for query:")
     print(f"'{query}'\n")
@@ -105,6 +107,6 @@ if __name__ == "__main__":
         print(f"  {r['text']}")
         print()
 
-    llm_output = bot.check_compliance(query, retrieved_clauses, top_k=3)
+    llm_output = bot.check_compliance(query, retrieved_clauses, top_k=10)
     print("\nCompliance Analysis Result:") 
     print(json.dumps(llm_output, indent=2, ensure_ascii=False))
