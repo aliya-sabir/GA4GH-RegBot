@@ -69,13 +69,14 @@ class ComplianceChecker:
             "- Do NOT list items that are present in the consent form.\n"
             "- Each missing element must describe the gap in the consent form in plain language.\n"
             "- Do NOT use clause titles as missing elements.\n"
+            "- Do NOT give unknown status.\n"
             "Return ONLY valid JSON:\n"
             '{\n'
             '  "status": "Compliant | Partial | Non-Compliant",\n'
             '  "missing_elements": ["specific gap in consent form language"],\n'
             '  "suggested_fix": "1. numbered specific action. 2. numbered specific action.",\n'
             '  "citations": [\n'
-            '    {"citation": "exact label from brackets", "source_url": "...", '
+            '    {"citation": "exact label from the clause identifier", "source_url": "...", '
             '"title": "clause title", "excerpt": "exact clause text"}\n'
             '  ]\n'
             '}\n\n'

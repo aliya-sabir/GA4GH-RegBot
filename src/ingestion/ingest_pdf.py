@@ -69,6 +69,7 @@ IGNORE_TITLES = [
     "conclusion",
     "implementation mechanisms and amendments",
     "deliverable revision history",
+    "additional file",
 ]
 
 

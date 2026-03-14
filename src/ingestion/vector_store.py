@@ -4,6 +4,7 @@ from rank_bm25 import BM25Okapi
 import re
 import chromadb
 from sentence_transformers import SentenceTransformer, CrossEncoder
+import hashlib
 
 CHROMA_DIR = str(Path(__file__).parent.parent / "chroma_db")
 COLLECTION_NAME = "ga4gh_chunks"
@@ -23,28 +24,34 @@ def _build_search_text(chunk: Dict[str, Any]) -> str:
         parts.append(f"Keywords: {', '.join(chunk['keywords'])}")
     return "\n".join(parts)
 
-# Deduplicate clauses for retrieval
+#deduplicate clauses for retrieval
 def deduplicate_clauses(clauses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Deduplicate clauses while preserving:
-    - Different parts of the same clause (e.g., 5_part1, 5_part2)
-    - Different text under the same clause_number (important for tables or version differences)
-    """
-    seen_texts = set()
-    deduped = []
+
+    seen: Dict[str, Dict[str, Any]] = {}
 
     for c in clauses:
-        # Normalize text for comparison
-        text_key = (c.get("text") or "").strip().lower()
-        if not text_key:
-            continue
+        title_snippet = re.sub(r"\s+", " ", (c.get("title") or "")).strip().lower()
+        # increased truncation so we can distinguish _part chunks
+        text_snippet = re.sub(r"\s+", " ", (c.get("text") or "")).strip().lower()[:300]
+        doc_name = (c.get("document_name", "") or "").strip().lower()
+        clause_id = (c.get("clause_number") or c.get("chunk_id") or "").strip().lower()
 
-        if text_key not in seen_texts:
-            seen_texts.add(text_key)
-            deduped.append(c)
+        key = f"{doc_name}::{title_snippet}::{clause_id}::{text_snippet}"
+
+        existing = seen.get(key)
+        if not existing:
+            seen[key] = c
         else:
-            # Already seen exact text; skip
-            continue
+            existing_score = existing.get("rerank_score", -99)
+            current_score = c.get("rerank_score", -99)
+            if current_score > existing_score:
+                seen[key] = c
+
+    deduped = sorted(
+        seen.values(),
+        key=lambda x: x.get("rerank_score", 0),
+        reverse=True,
+    )
 
     return deduped
 
@@ -76,11 +83,13 @@ class VectorStore:
         stored = 0
         for i in range(0, len(chunks), INGEST_BATCH):
             batch = chunks[i : i + INGEST_BATCH]
-            ids = [
-                f"{c.get('document_name', '')}_{c['chunk_id']}_{i + j}"
-                for j, c in enumerate(batch)
-            ]
             docs = [_build_search_text(c) for c in batch]
+            ids = [
+                hashlib.md5(
+                    f"{doc}::{c.get('document_name','')}::{c.get('chunk_id','')}".encode()
+                ).hexdigest()
+                for doc, c in zip(docs, batch)
+            ]
             metas = [
                 {
                     "document_name": c.get("document_name", ""),
