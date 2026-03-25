@@ -9,6 +9,7 @@ SOURCES_CONFIG = Path(__file__).parent / "pdf_sources.json"
 
 
 def _load_display_names() -> Dict[str, str]:
+    #load human readable file names from pdf_sources.json
     if SOURCES_CONFIG.exists():
         with open(SOURCES_CONFIG, "r", encoding="utf-8") as f:
             sources = json.load(f)

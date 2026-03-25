@@ -22,7 +22,7 @@ class RegBot:
     def __init__(
         self, 
         api_key: Optional[str] = None,
-        model_name: str = "meta-llama/Llama-3.3-70B-Instruct"
+        model_name: str = "Qwen/Qwen3.5-35B-A3B"
     ):
         self.api_key = api_key or os.getenv("HF_TOKEN")
         if not self.api_key:
@@ -91,7 +91,6 @@ class RegBot:
         return checker.check_compliance(user_consent_form, clauses, top_k)
 
 if __name__ == "__main__":
-    # Delegate test runs to run_test.py to keep main uncluttered.
+    # keep test runs in run_test.py to keep main uncluttered
     from run_test import main as _run_test_main
-
     _run_test_main()
