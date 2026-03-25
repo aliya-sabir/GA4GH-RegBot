@@ -130,7 +130,7 @@ class VectorStore:
             self._bm25_chunks = chunks
 
         return stored
-
+#helper function to retrieve semantic matches
     def _semantic_candidates(
         self,
         query_embedding: List[float],
@@ -162,6 +162,7 @@ class VectorStore:
             })
         return candidates
 
+# helper function to retrieve keyword matches per doc_type
     def _bm25_candidates(self, query_text: str, doc_type: str, top_k: int) -> List[Dict[str, Any]]:
         if not self._bm25:
             return []
@@ -203,6 +204,8 @@ class VectorStore:
         ).tolist()
 
         clauses: List[Dict[str, Any]] = []
+
+        #retrieving doc_type seperately
         for doc_type in ("policy", "consent_toolkit"):
             clauses.extend(self._semantic_candidates(query_embedding, doc_type, top_k))
             clauses.extend(self._bm25_candidates(query_text, doc_type, top_k))
