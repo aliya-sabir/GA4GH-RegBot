@@ -1,13 +1,17 @@
 from pathlib import Path
+import os
 from typing import Any, Dict, List
 from rank_bm25 import BM25Okapi
 import re
 import chromadb
 from sentence_transformers import SentenceTransformer, CrossEncoder
+import hashlib
 
 CHROMA_DIR = str(Path(__file__).parent.parent / "chroma_db")
 COLLECTION_NAME = "ga4gh_chunks"
 INGEST_BATCH = 64 
+RERANK_BATCH = 16
+DEFAULT_RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 
 def _build_search_text(chunk: Dict[str, Any]) -> str:
@@ -23,6 +27,35 @@ def _build_search_text(chunk: Dict[str, Any]) -> str:
         parts.append(f"Keywords: {', '.join(chunk['keywords'])}")
     return "\n".join(parts)
 
+def deduplicate_clauses(clauses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    seen: Dict[str, Dict[str, Any]] = {}
+
+    for c in clauses:
+        title_snippet = re.sub(r"\s+", " ", (c.get("title") or "")).strip().lower()
+        # increased truncation so we can distinguish _part chunks
+        text_snippet = re.sub(r"\s+", " ", (c.get("text") or "")).strip().lower()[:300]
+        doc_name = (c.get("document_name", "") or "").strip().lower()
+        clause_id = (c.get("clause_number") or c.get("chunk_id") or "").strip().lower()
+
+        key = f"{doc_name}::{title_snippet}::{clause_id}::{text_snippet}"
+
+        existing = seen.get(key)
+        if not existing:
+            seen[key] = c
+        else:
+            existing_score = existing.get("rerank_score", -99)
+            current_score = c.get("rerank_score", -99)
+            if current_score > existing_score:
+                seen[key] = c
+
+    deduped = sorted(
+        seen.values(),
+        key=lambda x: x.get("rerank_score", 0),
+        reverse=True,
+    )
+
+    return deduped
+
 def _tokenize(text: str) -> List[str]:
     return re.findall(r"[a-zA-Z0-9\-]+", text.lower())
 
@@ -30,7 +63,11 @@ class VectorStore:
 
     def __init__(self, embedding_model: SentenceTransformer):
         self.embedding_model = embedding_model
-        self.reranker = CrossEncoder('sentence-transformers/msmarco-MiniLM-L-12-v3')
+        if os.getenv("DISABLE_RERANKER") == "1":
+            self.reranker = None
+        else:
+            reranker_model_name = os.getenv("RERANKER_MODEL", DEFAULT_RERANKER_MODEL)
+            self.reranker = CrossEncoder(reranker_model_name)
         self.client = chromadb.PersistentClient(path=CHROMA_DIR)
   
         self._bm25 = None
@@ -47,18 +84,21 @@ class VectorStore:
             name=COLLECTION_NAME,
             metadata={"hnsw:space": "cosine"},
         )
-        # I had memory running out issue so processing chunks in batches
+        #I had memory running out issue so processing chunks in batches
         stored = 0
         for i in range(0, len(chunks), INGEST_BATCH):
             batch = chunks[i : i + INGEST_BATCH]
-            ids = [
-                f"{c.get('document_name', '')}_{c['chunk_id']}_{i + j}"
-                for j, c in enumerate(batch)
-            ]
             docs = [_build_search_text(c) for c in batch]
+            ids = [
+                hashlib.md5(
+                    f"{doc}::{c.get('document_name','')}::{c.get('chunk_id','')}".encode()
+                ).hexdigest()
+                for doc, c in zip(docs, batch)
+            ]
             metas = [
                 {
                     "document_name": c.get("document_name", ""),
+                    "clause_id": c.get("clause_id", c["chunk_id"]),
                     "chunk_id": c["chunk_id"],
                     "title": c.get("title", ""),
                     "content": c["content"],
@@ -66,10 +106,15 @@ class VectorStore:
                     "source_url": c.get("source_url", ""),
                     "page": c.get("page") or 0,
                     "keywords": ",".join(c.get("keywords", [])),
+                    "doc_type": c.get("type", ""),
                 }
                 for c in batch
             ]
-            embeddings = self.embedding_model.encode(docs).tolist()
+            embeddings = self.embedding_model.encode(
+                docs,
+                batch_size=32,
+                show_progress_bar=False
+            ).tolist()
             self.collection.upsert(
                 ids=ids,
                 documents=docs,
@@ -85,81 +130,102 @@ class VectorStore:
             self._bm25_chunks = chunks
 
         return stored
-
-    def query(self, query_text: str, top_k: int = 10) -> List[Dict[str, Any]]:
-        #top_k similar clauses for query
-        if self.collection.count() == 0:
-            return []
-
-        query_embedding = self.embedding_model.encode(query_text).tolist()
+#helper function to retrieve semantic matches
+    def _semantic_candidates(
+        self,
+        query_embedding: List[float],
+        doc_type: str,
+        top_k: int,
+    ) -> List[Dict[str, Any]]:
         results = self.collection.query(
             query_embeddings=[query_embedding],
-            n_results=top_k*3,   #added more results for reranker
+            n_results=top_k * 3,
+            where={"doc_type": doc_type},
             include=["documents", "metadatas", "distances"],
         )
 
-        clauses: List[Dict[str, Any]] = []
+        candidates: List[Dict[str, Any]] = []
         for doc, meta, dist in zip(
-            #since only one query currently, might expand on this later 
             results["documents"][0],
             results["metadatas"][0],
             results["distances"][0],
         ):
-            clauses.append({
+            candidates.append({
                 "document_name": meta.get("document_name", ""),
-                "clause_number": meta.get("chunk_id", ""),
+                "clause_number": meta.get("clause_id", meta.get("chunk_id", "")),
                 "title": meta.get("title", ""),
                 "text": meta.get("content", doc),
                 "similarity": round(1 - dist, 4),
                 "source": meta.get("source_url", ""),
                 "page": meta.get("page", 0),
+                "doc_type": meta.get("doc_type", ""),
             })
+        return candidates
 
-        if self._bm25:
-            scores = self._bm25.get_scores(_tokenize(query_text))
-            top_indices = sorted(
-                range(len(scores)),
-                key=lambda i: scores[i],
-                reverse=True
-            )[:top_k*2]
-            for i in top_indices:
-                c = self._bm25_chunks[i]
-                clauses.append({
-                    "document_name": c.get("document_name", ""),
-                    "clause_number": c.get("chunk_id", ""),
-                    "title": c.get("title", ""),
-                    "text": c["content"],
-                    "similarity": None,
-                    "bm25_score": round(float(scores[i]), 4),
-                    "source": c.get("source_url", ""),
-                    "page": c.get("page", 0),
-                })
+# helper function to retrieve keyword matches per doc_type
+    def _bm25_candidates(self, query_text: str, doc_type: str, top_k: int) -> List[Dict[str, Any]]:
+        if not self._bm25:
+            return []
 
-        #change 2: added reranker for better relevance
+        scores = self._bm25.get_scores(_tokenize(query_text))
+        doc_type_indices = [
+            i for i, chunk in enumerate(self._bm25_chunks)
+            if chunk.get("type") == doc_type
+        ]
+        top_indices = sorted(
+            doc_type_indices,
+            key=lambda i: scores[i],
+            reverse=True,
+        )[:top_k * 2]
+
+        candidates: List[Dict[str, Any]] = []
+        for i in top_indices:
+            chunk = self._bm25_chunks[i]
+            candidates.append({
+                "document_name": chunk.get("document_name", ""),
+                "clause_number": chunk.get("clause_id", chunk.get("chunk_id", "")),
+                "title": chunk.get("title", ""),
+                "text": chunk["content"],
+                "similarity": None,
+                "bm25_score": round(float(scores[i]), 4),
+                "source": chunk.get("source_url", ""),
+                "page": chunk.get("page", 0),
+                "doc_type": chunk.get("type", ""),
+            })
+        return candidates
+
+    def query(self, query_text: str, top_k: int = 10) -> List[Dict[str, Any]]:
+        #top_k similar clauses for query
+        if self.collection.count() == 0:
+            return []
+        
+        query_embedding = self.embedding_model.encode(
+            "Represent this sentence for searching relevant passages: " + query_text
+        ).tolist()
+
+        clauses: List[Dict[str, Any]] = []
+
+        #retrieving doc_type seperately
+        for doc_type in ("policy", "consent_toolkit"):
+            clauses.extend(self._semantic_candidates(query_embedding, doc_type, top_k))
+            clauses.extend(self._bm25_candidates(query_text, doc_type, top_k))
+
         if self.reranker:
-            scores = self.reranker.predict([(query_text, c["text"]) for c in clauses])
-            for c, score in zip(clauses, scores):
-                c["rerank_score"] = round(score, 4)
+            pairs = [
+                (query_text, f"{c.get('title', '')}\n{c.get('text', '')}")
+                for c in clauses
+            ]
+            rerank_scores = []
+            for i in range(0, len(pairs), RERANK_BATCH):
+                batch_scores = self.reranker.predict(
+                    pairs[i:i + RERANK_BATCH],
+                    batch_size=RERANK_BATCH,
+                )
+                rerank_scores.extend(batch_scores)
+            for c, score in zip(clauses, rerank_scores):
+                c["rerank_score"] = round(float(score), 4)
             clauses.sort(key=lambda x: x["rerank_score"], reverse=True)
 
-        #return clauses[:top_k]
+        deduped_clauses = deduplicate_clauses(clauses)
 
-        #deduplicate: keep highest-ranked chunk per doc+clause_number
-        #avoid dropping distinct clauses that share titles
-        seen = set()
-        deduped = []
-
-        for c in clauses:
-            doc = c.get("document_name", "")
-            clause = c.get("clause_number") or c.get("chunk_id")
-
-            if not clause:
-                clause = hash(c.get("text", ""))
-
-            key = f"{doc}::{clause}"
-
-            if key not in seen:
-                seen.add(key)
-                deduped.append(c)
-
-        return deduped[:top_k]
+        return deduped_clauses[:top_k]

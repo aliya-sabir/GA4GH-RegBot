@@ -6,10 +6,21 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pypdf import PdfReader
+from ingestion.text_config import (
+    SUB_SUBSECTION_PATTERN,
+    SUBSECTION_PATTERN,
+    SECTION_PATTERN,
+    ROMAN_SECTION_PATTERN,
+    MIXED_PATTERN,
+    _PAGE_NUMBER_RE,
+    _PAGE_HEADER_RE,
+    _DOC_TITLE_HEADERS,
+    IGNORE_TITLES,
+    STOPWORDS,
+    DOMAIN_TERMS,
+)
 
 SOURCES_CONFIG = Path(__file__).parent.parent / "pdf_sources.json"
-
-#change 1: experimented with chunk size
 
 CHUNK_SIZE = 700
 CHUNK_OVERLAP = 120
@@ -24,53 +35,6 @@ splitter = RecursiveCharacterTextSplitter(
     chunk_overlap=CHUNK_OVERLAP,
     separators=["\n\n", "\n", ". ", " "],
 )
-
-#for pattern matching of clause numbers in different formats 
-_ROMAN = r"(?:(?:X{1,3}(?:IX|IV|V?I{0,3})|IX|IV|V?I{1,3}|VI{0,3}))"
-
-SUB_SUBSECTION_PATTERN = re.compile(r"^(\d+\.\d+\.\d+)\.?\s+(.+)$")
-SUBSECTION_PATTERN = re.compile(r"^(\d+\.\d+)\.?\s+(.+)$")
-SECTION_PATTERN = re.compile(r"^(\d+)[\.\s]+(.+)$")
-ROMAN_SECTION_PATTERN = re.compile(rf"^({_ROMAN})\.\s+(.+)$", re.IGNORECASE)
-MIXED_PATTERN = re.compile(rf"^(\d+)\.({_ROMAN})\.?\s+(.+)$", re.IGNORECASE) #some pdfs have a mix of numeric systems
-
-#change 4: added more patterns to ignore such as headers footers and common irrelevant sections
-#for cleaning up pages headers and footers 
-
-_PAGE_NUMBER_RE = re.compile(r"^\s*\d{1,3}\s*$")
-# spaced-out capital headers 
-_PAGE_HEADER_RE = re.compile(
-    r"^\d*\s*[A-Z]\s+[A-Z]+(?:\s+[A-Z]\s*[A-Z]+)*\s*$"
-)
-# repeated document title headers that were breaking parsing
-_DOC_TITLE_HEADERS = [
-    re.compile(r"^\s*Global\s+Alliance\s+for\s+Genomics\s+(?:and|&)\s+Health.*$", re.IGNORECASE),
-    re.compile(r"^\s*GA4GH\s+Data\s+Privacy\s+and\s+Security\s+Policy\s*$", re.IGNORECASE),
-    re.compile(r"^\s*Framework\s+for\s+Responsible\s+Sharing\s+of\s+Genomic.*$", re.IGNORECASE),
-    re.compile(r"^\s*Clinical\s+Genomics\s*Consent\s+Clauses\s*$", re.IGNORECASE),
-    re.compile(r"^\s*Version[:\s].*\d{4}\s*$", re.IGNORECASE),
-    re.compile(r"^\s*Approved[:\s].*\d{4}\s*$", re.IGNORECASE),
-    re.compile(r"^\s*D\d{3}\w?\s*/\s*v\s*[\d.]+.*$", re.IGNORECASE),
-    re.compile(r"^\s*(?:Table:\s*)?Consent\s+Clauses\s+for\s+Large\s+Scale\s+Initiatives.*$", re.IGNORECASE),
-    re.compile(r"^\s*Nguyen\s+et\s+al\..*BMC\s+Medical\s+Ethics.*$", re.IGNORECASE),
-    re.compile(r"^\s*https?://doi\.org/.*$", re.IGNORECASE),
-    re.compile(r"^\s*R\s+E\s+S\s+E\s+A\s+R\s+C\s+H\s+A\s+R\s+T\s+I\s+C\s+L\s+E.*$", re.IGNORECASE),
-]
-
-#irrelevant sections common in many docs
-IGNORE_TITLES = [
-    "acknowledgements",
-    "references",
-    "contributors",
-    "revision history",
-    "appendix",
-    "context",
-    "preamble",
-    "conclusion",
-    "implementation mechanisms and amendments",
-    "deliverable revision history",
-]
-
 
 #removing appendix sections
 def _ignore_fluff(title: str):
@@ -100,37 +64,6 @@ def _clean_text(text: str) -> str:
 
     return "\n".join(cleaned_lines).strip()
 
-#change 5: added keywords as well for hybrid retrieval
-STOPWORDS = {
-    "the","and","or","a","an","to","of","for","in","on",
-    "with","by","is","are","be","this","that","it","as","at",
-    "from","not","will","can","may","shall","should","would",
-    "has","have","had","been","was","were","its","their","they",
-    "you","your","we","our","any","all","each","such","which",
-    "who","what","when","where","how","than","but","about",
-    "into","through","during","before","after","between","also",
-    "only","very","just","there","here","other","more","most",
-    "some","does","did","these","those","own","same","both",
-    "being","could","might","nor","too","then","include",
-    "including","use","used","using","make","made","given",
-    "provide","provided","well","based","however","therefore",
-    "need","case","way","part","able","apply","whether",
-    "must","upon","within","without","take","set","per",
-    "one","two","even","already","many","next","still",
-}
-
-DOMAIN_TERMS = {
-    "withdrawal", "withdraw", "authorization", "informed", "participate",
-    "sequencing", "genome", "variant", "variants", "genes",
-    "anonymized", "pseudonymized", "identifiable", "coded", "linkage",
-    "breach", "confidentiality", "identification",
-    "oversight", "accountability", "governance", "regulatory", "lawful",
-    "incidental", "disclosure", "findings", "diagnosis", "diagnostic",
-    "safeguards", "datasets", "collection", "processing", "storage",
-    "familial", "minors",
-    "commercial", "discrimination", "recontact", "limitations",
-    "dissemination", "proportionate", "registries",
-}
 
 def extract_keywords(text: str) -> List[str]:
     words = re.findall(r"[a-zA-Z]{3,}", text.lower())
@@ -211,40 +144,76 @@ def table_rows_to_chunks(
 
 
 def extract_pdf_text(file_path: str) -> str:
-    #return combined text 
+    #return combined text
     return "\n".join(text for _, text in extract_pages(file_path))
 
 
 def _clean_title(title: str) -> str:
-    return title.strip().strip(".")
+    title = re.sub(r"\s+", " ", title).strip()
+    title = re.sub(
+        r"\s+(?:\[)?(?:"
+        r"C\s*ONSENT\s+P\s*OLICY"
+        r"|D\s*ATA\s+P\s*RIVACY\s+AND\s+S\s*ECURITY\s+P\s*OLICY"
+        r"|F\s*RAMEWORK\s+FOR\s+R\s*ESPONSIBLE\s+S\s*HARING"
+        r")\]?\s*$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    )
+    return title.strip().strip(".").strip("[]")
+
+def _split_heading_title(title: str) -> Tuple[str, str]:
+    #some PDFs inline the first sentence after the heading label
+    parts = title.split(". ", 1)
+    if len(parts) == 2 and parts[0] and parts[1]:
+        #avoid splitting on abbreviations inside headings
+        words = parts[0].split()
+        if len(words) <= 8 and parts[1][:1].isupper():
+            return parts[0].rstrip("."), parts[1].strip()
+    words = title.split()
+    if len(words) >= 6:
+        starters = {"this", "the", "these", "it", "they", "in", "for", "with", "without"}
+        connectors = {"of", "for", "and", "to", "in", "with", "without", "on", "at", "by"}
+        for idx, word in enumerate(words):
+            clean = word.strip(",;:").lower()
+            if idx > 0 and clean in starters and word[:1].isupper():
+                pre_words = words[:idx]
+                if all(w.isupper() or w.istitle() or w.lower() in connectors for w in pre_words):
+                    return " ".join(pre_words).rstrip("."), " ".join(words[idx:]).strip()
+    return title, ""
 
 
 def _match_heading(line: str) -> Optional[Dict[str, str]]:
     #matches against section numbering patterns
     m = SUB_SUBSECTION_PATTERN.match(line)
     if m:
-        return {"id": m.group(1), "title": _clean_title(m.group(2)),
+        title, remainder = _split_heading_title(_clean_title(m.group(2)))
+        return {"id": m.group(1), "title": title, "remainder": remainder,
                 "level": "subsubsection", "parent_prefix": m.group(1).rsplit(".", 1)[0]}
 
     m = MIXED_PATTERN.match(line)
     if m:
         cid = f"{m.group(1)}.{m.group(2)}"
-        return {"id": cid, "title": _clean_title(m.group(3)),
+        title, remainder = _split_heading_title(_clean_title(m.group(3)))
+        return {"id": cid, "title": title, "remainder": remainder,
                 "level": "subsection", "parent_prefix": m.group(1)}
 
     m = SUBSECTION_PATTERN.match(line)
     if m:
-        return {"id": m.group(1), "title": _clean_title(m.group(2)),
+        title, remainder = _split_heading_title(_clean_title(m.group(2)))
+        return {"id": m.group(1), "title": title, "remainder": remainder,
                 "level": "subsection", "parent_prefix": m.group(1).split(".")[0]}
 
     m = SECTION_PATTERN.match(line)
     if m:
-        return {"id": m.group(1), "title": _clean_title(m.group(2)),
+        title, remainder = _split_heading_title(_clean_title(m.group(2)))
+        return {"id": m.group(1), "title": title, "remainder": remainder,
                 "level": "section", "parent_prefix": None}
 
     m = ROMAN_SECTION_PATTERN.match(line)
     if m:
-        return {"id": m.group(1).upper(), "title": _clean_title(m.group(2)),
+        title, remainder = _split_heading_title(_clean_title(m.group(2)))
+        return {"id": m.group(1).upper(), "title": title, "remainder": remainder,
                 "level": "section", "parent_prefix": None}
 
     return None
@@ -264,6 +233,7 @@ def _make_chunk(
     keywords = extract_keywords(f"{title} {content}")
     return {
         "document_name": document_name,
+        "clause_id": chunk_id,
         "chunk_id": chunk_id,
         "title": title,
         "content": content.strip(),
@@ -282,7 +252,13 @@ def parse_clauses(
     doc_type: str = "policy",
     document_name: str = "",
 ) -> Tuple[List[Dict[str, Any]], str]:
-    # parse text into clauses 
+    # parse text into clauses
+
+    #some PDFs flatten headings into long lines insert newlines before
+    text = re.sub(r"(?<!^)(\b[IVX]{1,4}\.\s+[A-Z])", r"\n\1", text)
+    text = re.sub(r"(?<!^)(\b\d+\.\d+\.\d+\.\s+[A-Z])", r"\n\1", text)
+    text = re.sub(r"(?<!^)(\b\d+\.\d+\.\s+[A-Z])", r"\n\1", text)
+    text = re.sub(r"(?<!^)(\b\d+\.\s+[A-Z])", r"\n\1", text)
 
     #split entire pdf into individual lines 
     raw_lines = text.split("\n")
@@ -292,10 +268,11 @@ def parse_clauses(
         if not stripped:
             lines.append("")
             continue
-        if lines and lines[-1] and not re.match(r"^[\dIVXivx]", stripped):
+        if lines and lines[-1] and not re.match(r"^(\d+\.|\(?\d+\)|[IVXivx]+\.)\s+", stripped):
             lines[-1] = lines[-1] + " " + stripped
         else:
             lines.append(stripped)
+
 
     chunks: List[Dict[str, Any]] = []
     unclaimed_parts: List[str] = []  #lines that didn't fit any section
@@ -331,6 +308,7 @@ def parse_clauses(
         if heading:
             level = heading["level"]
             cid = heading["id"]
+            remainder = heading.get("remainder", "")
 
             #appendices are not helpful even as fallback text so raising a flag to ignore all of them
             if _ignore_fluff(heading["title"]):
@@ -361,6 +339,11 @@ def parse_clauses(
                     doc_type=doc_type, document_name=document_name,
                 )
                 section_ids[cid] = cid
+            if remainder:
+                if current_sub is not None:
+                    current_sub["content"] += " " + remainder
+                elif current_section is not None:
+                    current_section["content"] += " " + remainder
             continue
 
         if ignore_mode:
@@ -474,7 +457,9 @@ def fetch_pdf_chunks(
     source = source_url or path.name
     doc_name = document_name or path.stem
     text = extract_pdf_text(file_path)
-    clauses, unclaimed = parse_clauses(text, source, doc_type, document_name=doc_name)
+    clauses: List[Dict[str, Any]] = []
+    if doc_type != "consent_toolkit":
+        clauses, _ = parse_clauses(text, source, doc_type, document_name=doc_name)
 
     pages = extract_pages(file_path)
     _assign_pages(clauses, pages)
@@ -487,15 +472,7 @@ def fetch_pdf_chunks(
         table_rows = extract_tables(file_path)
         table_chunks = table_rows_to_chunks(table_rows, source, doc_name, doc_type) if table_rows else []
 
-    #change 3: removed fallback text to avoid noise in retrieval
-    """fallback = _fallback_chunks(unclaimed, source, doc_type=doc_type,
-                                document_name=doc_name) if unclaimed else []"""
     fallback = []
-
-    """if not clauses and not fallback:
-        print(f"Warning: No clauses or text found in {source}.")
-        fallback = _page_overlap_fallback(file_path, source, doc_type,
-                                          document_name=doc_name)"""
     if not clauses and not table_chunks:
         print(f"Warning: No clauses detected in {source}. Skipping document.")
         return []
