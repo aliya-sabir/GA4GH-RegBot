@@ -3,3 +3,4 @@ __pycache__/
 .env
 src/chroma_db/
 hmm.json
+.github/instructions/test dataset.instructions.md
