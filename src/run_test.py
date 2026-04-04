@@ -12,7 +12,7 @@ from main import RegBot
 
 DEFAULT_DOCS_PATH = "C:/Users/AliyaSabir/GA4GH-RegBot/src/docs"
 DEFAULT_SCENARIO_PATH = Path(__file__).parent / "evaluation" / "tests.jsonl"
-DEFAULT_TOP_K = 7
+DEFAULT_TOP_K = 10
 
 
 def _load_test_scenario(
