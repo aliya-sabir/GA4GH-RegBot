@@ -10,6 +10,15 @@ LLM-powered compliance assistant for checking genomic data consent forms against
 
 Work in progress. This repository is an active proof of concept and the pipeline, evaluation flow, and documentation may continue to change as development progresses.
 
+## Tech Stack
+
+- Backend: Python 3.10+
+- LLM Inference: Hugging Face Inference API
+- Embeddings: Sentence Transformers
+- Retrieval: ChromaDB + BM25 hybrid search
+- Reranking: Cross-Encoder models
+- Document Processing: PyPDF + pdfplumber
+
 ## What it does
 
 RegBot takes consent form text, retrieves the most relevant GA4GH clauses using hybrid search, and asks an LLM to produce a structured compliance assessment with clause-backed citations.

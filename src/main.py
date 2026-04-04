@@ -22,7 +22,7 @@ class RegBot:
     def __init__(
         self, 
         api_key: Optional[str] = None,
-        model_name: str = "Qwen/Qwen3.5-35B-A3B"
+        model_name: str = "meta-llama/Meta-Llama-3-8B-Instruct"
     ):
         self.api_key = api_key or os.getenv("HF_TOKEN")
         if not self.api_key:
